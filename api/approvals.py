@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from typing import Any
+
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import get_settings
 from database import get_db
+from events import EVENT_CONTRACT_APPROVED, publish_platform_event
 from dependencies.ontology import validate_business_ontology
 from models.business import Approval, ApprovalLore, Contract
 from schemas.business import (
@@ -25,6 +30,27 @@ from services.approval_ontology_payload import (
 )
 
 router = APIRouter()
+
+log = logging.getLogger(__name__)
+
+
+async def _emit_contract_approved_event(
+    redis_url: str,
+    contract_number: str,
+    approval_id: str,
+) -> None:
+    try:
+        await publish_platform_event(
+            redis_url,
+            EVENT_CONTRACT_APPROVED,
+            {"contract_number": contract_number, "approval_id": approval_id},
+        )
+    except Exception as e:
+        log.warning(
+            "Redis 이벤트 contract.approved 발행 스킵: approval=%s — %s",
+            approval_id[:12] if approval_id else "?",
+            e,
+        )
 
 
 def _append_lore(
@@ -164,6 +190,15 @@ async def approve_approval(
         "approved",
         {"approver_id": body.approver_id, "contract_number": c.contract_number},
     )
+    redis_url = (get_settings().redis_url or "").strip()
+    if redis_url:
+        asyncio.create_task(
+            _emit_contract_approved_event(
+                redis_url,
+                c.contract_number,
+                appr.id,
+            ),
+        )
     await db.refresh(appr)
     return appr
 
