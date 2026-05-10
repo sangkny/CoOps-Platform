@@ -3,9 +3,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from auth.dependencies import require_role
 from database import get_db
 from models.business import Contract
-from schemas.business import ContractCreate, ContractResponse
+from schemas.business import (
+    ContractAnalyzeBody,
+    ContractAnalyzeResponse,
+    ContractCreate,
+    ContractResponse,
+)
+from services.contract_analyzer import ContractAnalyzer
 
 router = APIRouter()
 
@@ -50,6 +57,27 @@ async def create_contract(
     await db.flush()
     await db.refresh(obj)
     return obj
+
+
+@router.post(
+    "/analyze",
+    response_model=ContractAnalyzeResponse,
+    summary="DEBATE 계약 분석 + BUSINESS 재검증 + Lore 저장",
+)
+async def analyze_contract(
+    body: ContractAnalyzeBody,
+    db:   AsyncSession = Depends(get_db),
+    _: dict = Depends(require_role("staff", "admin")),
+) -> ContractAnalyzeResponse:
+    svc = ContractAnalyzer()
+    try:
+        payload = await svc.analyze(db, body.contract_text, body.contract_number)
+        return ContractAnalyzeResponse(**payload)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        ) from e
 
 
 @router.get("/{contract_id}", response_model=ContractResponse)

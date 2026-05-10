@@ -159,3 +159,30 @@ class ProcessResponse(BaseModel):
     status:         str
     contract_id:    str | None
     created_at:     datetime
+
+class ContractAnalyzeBody(BaseModel):
+    contract_number: str = Field(
+        ...,
+        examples=["CON-20260509"],
+        description="CON-YYYYMMDD",
+    )
+    contract_text: str = Field(default="", description="본문 분석 문자열")
+
+    @field_validator("contract_number", mode="before")
+    @classmethod
+    def _cn_analyze(cls, v: Any) -> str:
+        if not isinstance(v, str):
+            raise TypeError("contract_number 는 문자열")
+        return validate_contract_number_format(v)
+
+
+class ContractAnalyzeResponse(BaseModel):
+    contract_number:        str
+    summary:                  str
+    risk_level:               str
+    risk_highlights:          list[str]
+    debate_output_excerpt:   str
+    ontology_passed:          bool
+    ontology_errors:          list[str]
+    lore:                     list[dict[str, Any]] = Field(default_factory=list)
+    record_id:                str
