@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI
 from api import api_router
 from config import Settings, get_settings
 from events import DEFAULT_EVENTS_CHANNEL, EventBus
+from observability.fastapi_install import install_observability
 from services.platform_event_handlers import coops_incoming_dispatch
 
 log = logging.getLogger("main")
@@ -67,6 +68,8 @@ app = FastAPI(
     version=get_settings().version,
     lifespan=lifespan,
 )
+
+install_observability(app, get_settings().service_name)
 
 app.include_router(api_router, prefix="/api/v1")
 
