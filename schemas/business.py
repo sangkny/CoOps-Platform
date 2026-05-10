@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 from typing import Any
 
@@ -19,10 +20,6 @@ class ContractLifecycle(str, Enum):
     terminated         = "terminated"
 
 
-class ApprovalState(str, Enum):
-    pending  = "pending"
-    approved = "approved"
-    rejected = "rejected"
 
 
 class ProcessState(str, Enum):
@@ -94,28 +91,55 @@ class ContractResponse(BaseModel):
     created_at:       datetime
 
 
-class ApprovalCreate(BaseModel):
-    contract_id:     str               = Field(min_length=1)
-    step_order:      int               = Field(default=1, ge=1)
-    approver_role:   str               = Field(default="reviewer", max_length=120)
+class ApprovalRequestBody(BaseModel):
+    """POST /approvals/request — BUSINESS Ontology 검증 대상 dict 조립용."""
+
+    contract_number:       str = Field(description="CON-YYYYMMDD (계약 번호)")
+    assigned_approver_id:  str = Field(min_length=1, max_length=128, description="결재 담당 승인자 ID")
+    requester_id:          str = Field(min_length=1, max_length=128)
+    request_date:          date
+    description:           str = Field(default="", max_length=8000)
+    amount:                Decimal | None = Field(default=None, description="금액 — 있으면 currency 필수 (Ontology)")
+    currency:              str | None = Field(default=None, max_length=8)
+    step_order:            int          = Field(default=1, ge=1)
+    approver_role:         str          = Field(default="reviewer", max_length=120)
+
+    @field_validator("contract_number", mode="before")
+    @classmethod
+    def _cn(cls, v: Any) -> str:
+        if not isinstance(v, str):
+            raise TypeError("contract_number 는 문자열")
+        return validate_contract_number_format(v)
 
 
-class ApprovalUpdate(BaseModel):
-    status:  ApprovalState = Field(...)
-    comment: str | None    = Field(default=None, max_length=4000)
+class ApprovalApproveBody(BaseModel):
+    approver_id: str = Field(min_length=1, max_length=128, description="승인 처리자 ID")
+
+
+class ApprovalRejectBody(BaseModel):
+    approver_id: str = Field(min_length=1, max_length=128)
+    reason:      str = Field(min_length=1, max_length=4000)
 
 
 class ApprovalResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    id:              str
-    contract_id:     str
-    step_order:      int
-    approver_role:   str
-    status:          str
-    comment:         str | None
-    finalized:       bool
-    created_at:      datetime
+    id:                    str
+    contract_id:           str
+    step_order:            int
+    approver_role:         str
+    assigned_approver_id:  str
+    requester_id:          str
+    request_date:          date
+    description:           str | None
+    amount:                Decimal | None
+    currency:              str | None
+    actor_id:              str | None
+    status:                str
+    comment:               str | None
+    finalized:             bool
+    created_at:            datetime
+    updated_at:            datetime
 
 
 class ProcessCreate(BaseModel):

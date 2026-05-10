@@ -11,16 +11,17 @@ from fastapi import Depends, FastAPI
 
 from api import api_router
 from config import Settings, get_settings
-from database import create_tables
-
 log = logging.getLogger("main")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    await create_tables()
     settings = get_settings()
-    log.info("%s v%s 시작 (테이블: create_tables)", settings.service_name, settings.version)
+    log.info(
+        "%s v%s 시작 (스키마: 컨테이너 시작 시 alembic upgrade head)",
+        settings.service_name,
+        settings.version,
+    )
     yield
     log.info("%s 종료", settings.service_name)
 
