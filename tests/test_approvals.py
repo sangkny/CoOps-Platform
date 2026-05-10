@@ -8,6 +8,15 @@ import pytest
 from httpx import AsyncClient
 
 
+async def _staff_headers(client: AsyncClient) -> dict[str, str]:
+    r = await client.post(
+        "/api/v1/auth/token",
+        data={"username": "staff", "password": "staff123"},
+    )
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
 def _unique_contract_number() -> str:
     """동일 DB 재실행 시 CON 번호 충돌 방지 (유효 YYYYMMDD)."""
     a = date(2018, 1, 1).toordinal()
@@ -35,6 +44,8 @@ async def test_approval_request_and_pending_and_approve(client: AsyncClient) -> 
     cn = _unique_contract_number()
     await _create_contract(client, cn)
 
+    hdrs = await _staff_headers(client)
+
     req = await client.post(
         "/api/v1/approvals/request",
         json={
@@ -48,6 +59,7 @@ async def test_approval_request_and_pending_and_approve(client: AsyncClient) -> 
             "step_order":                 1,
             "approver_role":              "manager",
         },
+        headers=hdrs,
     )
     assert req.status_code == 201, req.text
     aid = req.json()["id"]
@@ -61,6 +73,7 @@ async def test_approval_request_and_pending_and_approve(client: AsyncClient) -> 
     ap = await client.post(
         f"/api/v1/approvals/{aid}/approve",
         json={"approver_id": "EMP-APPROVER"},
+        headers=hdrs,
     )
     assert ap.status_code == 200, ap.text
     assert ap.json()["status"] == "approved"
@@ -71,6 +84,7 @@ async def test_approval_request_and_pending_and_approve(client: AsyncClient) -> 
 async def test_reject_with_reason(client: AsyncClient) -> None:
     cn = _unique_contract_number()
     await _create_contract(client, cn)
+    hdrs = await _staff_headers(client)
     req = await client.post(
         "/api/v1/approvals/request",
         json={
@@ -80,6 +94,7 @@ async def test_reject_with_reason(client: AsyncClient) -> None:
             "request_date":          datetime.now().date().isoformat(),
             "description":         "반려 테스트",
         },
+        headers=hdrs,
     )
     assert req.status_code == 201
     aid = req.json()["id"]
@@ -87,6 +102,7 @@ async def test_reject_with_reason(client: AsyncClient) -> None:
     rj = await client.post(
         f"/api/v1/approvals/{aid}/reject",
         json={"approver_id": "MGR-01", "reason": "예산 초과"},
+        headers=hdrs,
     )
     assert rj.status_code == 200, rj.text
     b = rj.json()
@@ -98,6 +114,7 @@ async def test_reject_with_reason(client: AsyncClient) -> None:
 async def test_ontology_amount_requires_currency(client: AsyncClient) -> None:
     cn = _unique_contract_number()
     await _create_contract(client, cn)
+    hdrs = await _staff_headers(client)
     bad = await client.post(
         "/api/v1/approvals/request",
         json={
@@ -108,6 +125,7 @@ async def test_ontology_amount_requires_currency(client: AsyncClient) -> None:
             "description":         "통화 누락",
             "amount":                "5000",
         },
+        headers=hdrs,
     )
     assert bad.status_code == 422
     detail = bad.json().get("detail") or {}
@@ -116,14 +134,17 @@ async def test_ontology_amount_requires_currency(client: AsyncClient) -> None:
 
 @pytest.mark.asyncio
 async def test_invalid_contract_number_ontology(client: AsyncClient) -> None:
+    """등록되지 않은 CON 번호(형식은 유효) → 404."""
+    hdrs = await _staff_headers(client)
     r = await client.post(
         "/api/v1/approvals/request",
         json={
-            "contract_number":      "BAD-ID",
+            "contract_number":      "CON-20990101",
             "assigned_approver_id": "A",
             "requester_id":          "B",
             "request_date":          str(date(2026, 6, 4)),
-            "description":         "형식 오류",
+            "description":         "존재하지 않는 계약",
         },
+        headers=hdrs,
     )
-    assert r.status_code == 422
+    assert r.status_code == 404
