@@ -23,6 +23,7 @@ from agents.context_chunking import (
     chunking_metrics_snapshot,
 )
 from agents.orchestrator import Orchestrator, OrchestraStrategy
+from observability.prom_metrics import observe_chunking_snapshot
 from ontology.base import OntologyDomain
 from ontology.validator import OntologyValidator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -139,17 +140,23 @@ class ContractAnalyzer:
                 if not _analysis.fits_context
                 else []
             )
-            log.info(
-                "coops_contract_context",
-                extra=chunking_metrics_snapshot(
-                    _analysis,
-                    _chunks,
-                    extra={
-                        "flow": "coops_contract_analysis",
-                        "contract_id": cn,
-                        "strategy": str(orch.strategy.value),
-                    },
-                ),
+            _snap = chunking_metrics_snapshot(
+                _analysis,
+                _chunks,
+                extra={
+                    "flow": "coops_contract_analysis",
+                    "contract_id": cn,
+                    "strategy": str(orch.strategy.value),
+                },
+            )
+            log.info("coops_contract_context", extra=_snap)
+            # Step 4 — Prometheus 텍스트 포맷 export (best-effort, 거동 영향 0)
+            observe_chunking_snapshot(
+                _snap,
+                service="coops",
+                flow="coops_contract_analysis",
+                strategy=str(orch.strategy.value),
+                domain="business",
             )
         except Exception as _ctxe:
             log.debug("[chunking_metrics] 관측 한 줄 로깅 실패(무시): %s", _ctxe)
