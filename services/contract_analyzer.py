@@ -1,13 +1,27 @@
-"""계약서 DEBATE 분석 + BUSINESS Ontology + Lore 영속화."""
+"""계약서 DEBATE 분석 + BUSINESS Ontology + Lore 영속화.
+
+관측(Phase 2 Month 3 — book §16.10.3 / §16.12 Step 3-b): Orchestrator 진입
+직전에 ``analyze_prompt_for_model`` + ``chunking_metrics_snapshot`` 으로
+입력 토큰 추정·청크 권장값을 한 줄 구조화 로그(``coops_contract_context``)로
+흘린다. 거동 변경은 없으며, 이 로그는 Prometheus exporter(§16.12 중기)의
+입력이 된다. MEDI ``services/report_gen.py`` 와 동일 키 집합을 내보내
+3개 서비스가 한 화면에서 비교 가능하다.
+"""
 from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import uuid
 from datetime import date
 from typing import Any
 
+from agents.context_chunking import (
+    analyze_prompt_for_model,
+    chunk_prompt_for_model,
+    chunking_metrics_snapshot,
+)
 from agents.orchestrator import Orchestrator, OrchestraStrategy
 from ontology.base import OntologyDomain
 from ontology.validator import OntologyValidator
@@ -17,6 +31,21 @@ from models.business import ContractAnalysisRecord
 from schemas.business import validate_contract_number_format
 
 log = logging.getLogger("services.contract_analyzer")
+
+
+def _dominant_model_label(strategy: OrchestraStrategy) -> str:
+    """
+    전략별로 컨텍스트가 더 빠듯한 쪽 모델 라벨을 돌려준다.
+
+    MEDI ``services/report_gen.py:_dominant_model_label`` 과 동일 규칙:
+    DEBATE/CONSENSUS 는 HEAVY 모델이 임계로 작동한다 (Reviewer/Fixer 누적 입력).
+    env 우선순위는 shared-libraries 의 ``llm/providers/local.py`` 와 동일하게
+    ``LOCAL_HEAVY_MODEL`` / ``LOCAL_FAST_MODEL`` 을 본다.
+    """
+    s = str(strategy.value if hasattr(strategy, "value") else strategy).lower()
+    if s in {"consensus", "debate"}:
+        return os.getenv("LOCAL_HEAVY_MODEL", "google/gemma-4-26b-a4b")
+    return os.getenv("LOCAL_FAST_MODEL", "google/gemma-4-e4b")
 
 
 def parse_contract_analysis(output_text: str) -> dict[str, Any]:
@@ -94,7 +123,38 @@ class ContractAnalyzer:
             strategy=OrchestraStrategy.DEBATE,
             max_iterations=2,
         )
-        res    = await orch.execute(f"계약서 분석:\n{prelude}")
+
+        task = f"계약서 분석:\n{prelude}"
+
+        # ── 컨텍스트 청킹 메트릭 관측 (book §16.10.3 / §16.12 Step 3-b) ────────
+        # 거동은 바꾸지 않고, 한 번의 호출에 대해 ``chunking_*`` 표준 11종 키를
+        # 한 줄 로그로 흘린다. 호출자 메타데이터(contract_id, strategy)는
+        # ``extra`` 로 병합한다. MEDI ``medi_diagnosis_context`` 와 키 집합이
+        # 1:1 일치한다 (flow 값만 다름).
+        try:
+            _model_label = _dominant_model_label(orch.strategy)
+            _analysis = analyze_prompt_for_model(task, model=_model_label)
+            _chunks = (
+                chunk_prompt_for_model(task, model=_model_label)
+                if not _analysis.fits_context
+                else []
+            )
+            log.info(
+                "coops_contract_context",
+                extra=chunking_metrics_snapshot(
+                    _analysis,
+                    _chunks,
+                    extra={
+                        "flow": "coops_contract_analysis",
+                        "contract_id": cn,
+                        "strategy": str(orch.strategy.value),
+                    },
+                ),
+            )
+        except Exception as _ctxe:
+            log.debug("[chunking_metrics] 관측 한 줄 로깅 실패(무시): %s", _ctxe)
+
+        res    = await orch.execute(task)
         debate = str(res.output or "").strip()
 
         parsed   = parse_contract_analysis(debate)
