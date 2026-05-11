@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import get_settings
 from database import get_db
 from events import EVENT_CONTRACT_APPROVED, publish_platform_event
-from auth.dependencies import require_role
+from auth.policy import policy_require
 from dependencies.ontology import validate_business_ontology
 from models.business import Approval, ApprovalLore, Contract
 from schemas.business import (
@@ -79,7 +79,7 @@ def _append_lore(
 async def request_approval(
     body: ApprovalRequestBody,
     db:   AsyncSession = Depends(get_db),
-    _: dict = Depends(require_role("staff", "admin")),
+    _: dict = Depends(policy_require("coops", "request_approval")),
 ) -> Approval:
     c = await db.scalar(
         select(Contract).where(Contract.contract_number == body.contract_number),
@@ -154,7 +154,7 @@ async def approve_approval(
     approval_id: str,
     body:          ApprovalApproveBody,
     db:            AsyncSession = Depends(get_db),
-    _: dict        = Depends(require_role("staff", "admin")),
+    _: dict        = Depends(policy_require("coops", "approve")),
 ) -> Approval:
     appr = await db.get(Approval, approval_id)
     if not appr:
@@ -215,7 +215,7 @@ async def reject_approval(
     approval_id: str,
     body:          ApprovalRejectBody,
     db:            AsyncSession = Depends(get_db),
-    _: dict        = Depends(require_role("staff", "admin")),
+    _: dict        = Depends(policy_require("coops", "reject")),
 ) -> Approval:
     appr = await db.get(Approval, approval_id)
     if not appr:

@@ -17,6 +17,15 @@ async def _staff_headers(client: AsyncClient) -> dict[str, str]:
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
+async def _manager_headers(client: AsyncClient) -> dict[str, str]:
+    r = await client.post(
+        "/api/v1/auth/token",
+        data={"username": "manager", "password": "mgr123"},
+    )
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
 def _unique_contract_number() -> str:
     """동일 DB 재실행 시 CON 번호 충돌 방지 (유효 YYYYMMDD)."""
     a = date(2018, 1, 1).toordinal()
@@ -70,10 +79,12 @@ async def test_approval_request_and_pending_and_approve(client: AsyncClient) -> 
     ids = {x["id"] for x in pend.json()}
     assert aid in ids
 
+    mgr = await _manager_headers(client)
+
     ap = await client.post(
         f"/api/v1/approvals/{aid}/approve",
         json={"approver_id": "EMP-APPROVER"},
-        headers=hdrs,
+        headers=mgr,
     )
     assert ap.status_code == 200, ap.text
     assert ap.json()["status"] == "approved"
@@ -99,10 +110,12 @@ async def test_reject_with_reason(client: AsyncClient) -> None:
     assert req.status_code == 201
     aid = req.json()["id"]
 
+    mgr = await _manager_headers(client)
+
     rj = await client.post(
         f"/api/v1/approvals/{aid}/reject",
         json={"approver_id": "MGR-01", "reason": "예산 초과"},
-        headers=hdrs,
+        headers=mgr,
     )
     assert rj.status_code == 200, rj.text
     b = rj.json()
