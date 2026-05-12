@@ -164,10 +164,11 @@ async def test_webhook_invalid_json_returns_400(client: AsyncClient) -> None:
 async def test_webhook_unsupported_event_returns_ignored(
     client: AsyncClient,
 ) -> None:
+    """R2 부터 invoice.paid 는 지원 — coupon.* 같은 진짜 미지원 이벤트로 검증."""
     with _stripe_enabled():
         r = await client.post(
             "/api/v1/billing/stripe/webhook",
-            content=json.dumps({"type": "invoice.paid", "data": {"object": {}}}).encode(),
+            content=json.dumps({"type": "coupon.created", "data": {"object": {}}}).encode(),
             headers={"content-type": "application/json"},
         )
     assert r.status_code == 200
