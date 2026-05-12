@@ -3,6 +3,8 @@ from models.billing import (
     BillingPlan,
     BillingSubscription,
     BillingUsageRecord,
+    StripePlanMapping,
+    StripeSubscription,
 )
 from models.business import Approval, ApprovalLore, Contract, ContractAnalysisRecord, Process
 from models.content import ContentJob
@@ -18,4 +20,6 @@ __all__ = [
     "BillingUsageRecord",
     "BillingMonthlyUserUsage",
     "ContentJob",
+    "StripePlanMapping",
+    "StripeSubscription",
 ]

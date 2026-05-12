@@ -8,6 +8,7 @@ from .investor import router as investor_router
 from .ontology import router as ontology_router
 from .processes import router as processes_router
 from .sns import router as sns_router
+from .stripe import router as stripe_router
 from .video import router as video_router
 
 api_router = APIRouter()
@@ -36,6 +37,11 @@ api_router.include_router(
     billing_router,
     prefix="/billing",
     tags=["billing"],
+)
+api_router.include_router(
+    stripe_router,
+    prefix="/billing/stripe",
+    tags=["billing-stripe"],
 )
 api_router.include_router(
     video_router,

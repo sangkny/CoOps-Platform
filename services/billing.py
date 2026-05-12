@@ -14,8 +14,10 @@ from models.billing import (
     BillingPlan,
     BillingSubscription,
     BillingUsageRecord,
+    StripePlanMapping,
+    StripeSubscription,
 )
-from saas import BillingService
+from saas import BillingService, StripeConfig, StripeService
 from saas.helpers import (
     DEFAULT_FREE_PLAN_CODE,
     current_year_month,
@@ -29,6 +31,15 @@ coops_billing = BillingService(
     usage_record_cls=BillingUsageRecord,
     monthly_usage_cls=BillingMonthlyUserUsage,
     default_free_code=DEFAULT_FREE_PLAN_CODE,
+)
+
+# Stripe 어댑터 — env 토글 (``COOPS_STRIPE_ENABLED`` 또는 ``STRIPE_ENABLED``).
+coops_stripe_config = StripeConfig.from_env(prefix="COOPS_")
+coops_stripe = StripeService(
+    config=coops_stripe_config,
+    billing=coops_billing,
+    plan_mapping_cls=StripePlanMapping,
+    stripe_subscription_cls=StripeSubscription,
 )
 
 
@@ -67,6 +78,8 @@ async def get_or_create_monthly_usage(
 __all__ = [
     "DEFAULT_FREE_PLAN_CODE",
     "coops_billing",
+    "coops_stripe",
+    "coops_stripe_config",
     "current_year_month",
     "get_plan_by_code",
     "list_active_plans",
