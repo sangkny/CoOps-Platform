@@ -31,6 +31,7 @@ coops_billing = BillingService(
     usage_record_cls=BillingUsageRecord,
     monthly_usage_cls=BillingMonthlyUserUsage,
     default_free_code=DEFAULT_FREE_PLAN_CODE,
+    service_name="coops",
 )
 
 # Stripe 어댑터 — env 토글 (``COOPS_STRIPE_ENABLED`` 또는 ``STRIPE_ENABLED``).

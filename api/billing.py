@@ -31,6 +31,9 @@ from models import (
 from saas.schemas import (
     AdminStatsResponse,
     MeResponse,
+    OnboardBatchEntry,
+    OnboardBatchRequest,
+    OnboardBatchResponse,
     PlanDistributionEntry,
     PlanListResponse,
     PlanOut,
@@ -129,6 +132,78 @@ async def admin_subscribe(
         plan_code=plan.code,
         previous_plan_code=previous,
         started_at=sub.started_at,
+    )
+
+
+@router.post(
+    "/admin/onboard-batch",
+    response_model=OnboardBatchResponse,
+    summary="admin — 베타 고객 일괄 plan 부여 (C Week 3 Day 5)",
+)
+async def admin_onboard_batch(
+    body: OnboardBatchRequest,
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(require_role("admin")),
+) -> OnboardBatchResponse:
+    """베타 출시용 — 최대 100명의 user_id 에 동일 plan 을 부여한다.
+
+    부분 실패는 ``entries[].status="failed"`` + ``error`` 로 응답하고, 성공
+    항목은 그대로 commit. 모든 plan 전환은 ``saas_plan_transitions_total``
+    카운터에 channel="admin" 으로 기록된다.
+
+    welcome_note 는 응답에 그대로 echo — 운영자가 발송 시스템 (Slack, 이메일)
+    으로 별도 전송. 본 라우트는 결제/통신을 직접 수행하지 않는다.
+    """
+    entries: list[OnboardBatchEntry] = []
+    succeeded = 0
+    failed = 0
+    seen: set[str] = set()
+    for uid in body.user_ids:
+        uid_clean = uid.strip()
+        if not uid_clean or uid_clean in seen:
+            entries.append(
+                OnboardBatchEntry(
+                    user_id=uid_clean,
+                    plan_code=body.plan_code,
+                    status="failed",
+                    error="duplicate_or_empty_user_id",
+                )
+            )
+            failed += 1
+            continue
+        seen.add(uid_clean)
+        try:
+            sub, plan, previous = await switch_subscription(
+                db, uid_clean, body.plan_code
+            )
+            entries.append(
+                OnboardBatchEntry(
+                    user_id=uid_clean,
+                    plan_code=plan.code,
+                    previous_plan_code=previous,
+                    status="ok",
+                )
+            )
+            succeeded += 1
+        except ValueError as exc:
+            entries.append(
+                OnboardBatchEntry(
+                    user_id=uid_clean,
+                    plan_code=body.plan_code,
+                    status="failed",
+                    error=str(exc),
+                )
+            )
+            failed += 1
+
+    return OnboardBatchResponse(
+        plan_code=body.plan_code,
+        requested=len(body.user_ids),
+        succeeded=succeeded,
+        failed=failed,
+        entries=entries,
+        welcome_note=body.welcome_note,
+        issued_at=datetime.now(timezone.utc),
     )
 
 
