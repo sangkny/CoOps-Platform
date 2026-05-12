@@ -8,7 +8,7 @@ from models.billing import (
 )
 from models.business import Approval, ApprovalLore, Contract, ContractAnalysisRecord, Process
 from models.content import ContentJob
-from models.notifications import PushDevice
+from models.notifications import Notification, PushDevice
 
 __all__ = [
     "Approval",
@@ -24,4 +24,5 @@ __all__ = [
     "StripePlanMapping",
     "StripeSubscription",
     "PushDevice",
+    "Notification",
 ]

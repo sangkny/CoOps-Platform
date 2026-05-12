@@ -30,11 +30,48 @@ from services.approval_ontology_payload import (
     ontology_payload_decision,
     ontology_payload_request,
 )
+from services.notifications import coops_notifier
 from services.quota import QuotaContext, enforce_quota, record_call
 
 router = APIRouter()
 
 log = logging.getLogger(__name__)
+
+
+async def _notify_safe(
+    db: AsyncSession,
+    *,
+    user_id: str | None,
+    kind: str,
+    title: str,
+    body: str,
+    ref_id: str | None = None,
+    data: dict[str, Any] | None = None,
+) -> None:
+    """E-R2-Day 2 — 결재 hook 용 best-effort 알림.
+
+    - user_id 비어있으면 noop.
+    - InboxService + PushService 모두 실패해도 결재 트랜잭션을 막지 않는다.
+    - 호출 시점은 ``await db.flush()`` 이후 / ``db.refresh()`` 이전이어야
+      ref_id 가 안전하게 ORM id 를 가리킨다.
+    """
+    if not user_id:
+        return
+    try:
+        await coops_notifier.notify(
+            db,
+            user_id=user_id,
+            title=title,
+            body=body,
+            kind=kind,
+            ref_id=ref_id,
+            data=data,
+        )
+    except Exception as exc:
+        log.warning(
+            "approval_notify_failed kind=%s user=%s ref=%s err=%s",
+            kind, user_id, ref_id, exc,
+        )
 
 
 async def _emit_contract_approved_event(
@@ -138,6 +175,24 @@ async def request_approval(
                 "currency":     appr.currency,
             },
         )
+
+        # E-R2-Day 2 — 결재자에게 자동 알림 (inbox + 가능시 push)
+        await _notify_safe(
+            db,
+            user_id=appr.assigned_approver_id,
+            kind="approval_request",
+            title="결재 요청",
+            body=f"{c.contract_number} — 요청자 {appr.requester_id or '?'}",
+            ref_id=appr.id,
+            data={
+                "approval_id": appr.id,
+                "contract_number": c.contract_number,
+                "amount": str(appr.amount) if appr.amount is not None else None,
+                "currency": appr.currency,
+                "route": "approval_detail",
+            },
+        )
+
         await db.refresh(appr)
         success = True
         return appr
@@ -216,6 +271,24 @@ async def approve_approval(
         "approved",
         {"approver_id": body.approver_id, "contract_number": c.contract_number},
     )
+
+    # E-R2-Day 2 — 요청자에게 결재 결과 알림
+    await _notify_safe(
+        db,
+        user_id=appr.requester_id,
+        kind="approval_decision",
+        title="결재 승인됨",
+        body=f"{c.contract_number} — {body.approver_id} 승인",
+        ref_id=appr.id,
+        data={
+            "approval_id": appr.id,
+            "contract_number": c.contract_number,
+            "decision": "approved",
+            "approver_id": body.approver_id,
+            "route": "approval_detail",
+        },
+    )
+
     redis_url = (get_settings().redis_url or "").strip()
     if redis_url:
         asyncio.create_task(
@@ -281,5 +354,24 @@ async def reject_approval(
             "contract_number": c.contract_number,
         },
     )
+
+    # E-R2-Day 2 — 요청자에게 반려 사유 알림
+    await _notify_safe(
+        db,
+        user_id=appr.requester_id,
+        kind="approval_decision",
+        title="결재 반려됨",
+        body=f"{c.contract_number} — 사유: {(body.reason or '').strip()[:80]}",
+        ref_id=appr.id,
+        data={
+            "approval_id": appr.id,
+            "contract_number": c.contract_number,
+            "decision": "rejected",
+            "approver_id": body.approver_id,
+            "reason": body.reason,
+            "route": "approval_detail",
+        },
+    )
+
     await db.refresh(appr)
     return appr

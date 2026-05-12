@@ -41,3 +41,36 @@ class SendResult(BaseModel):
     failed: int
     skipped: int
     tokens: list[str]
+
+
+# ── In-app inbox (E-R2-Day 1) ────────────────────────────────────────
+
+
+class InboxItemOut(BaseModel):
+    id: str
+    user_id: str
+    kind: str
+    title: str
+    body: str
+    ref_id: str | None = None
+    data: dict | None = None
+    read: bool
+    read_at: datetime | None = None
+    created_at: datetime
+
+
+class InboxListResponse(BaseModel):
+    user_id: str
+    unread_count: int
+    items: list[InboxItemOut]
+
+
+class MarkReadAllResult(BaseModel):
+    updated: int
+
+
+class NotifyResult(BaseModel):
+    """``notify()`` helper 응답 — inbox 와 push 두 결과를 함께 노출."""
+
+    inbox_id: str | None = None
+    push: SendResult | dict

@@ -1,20 +1,25 @@
-"""CoOps push notification 라우트 (E-Day 4, 2026-05-13).
+"""CoOps push notification 라우트 (E-Day 4 / E-R2-Day 1).
 
 엔드포인트:
     POST   /api/v1/notifications/devices                — 본인 단말 등록 (idempotent)
     DELETE /api/v1/notifications/devices/{token}        — 본인 단말 폐기
     GET    /api/v1/notifications/devices                — 본인 활성 단말 목록
     POST   /api/v1/notifications/admin/send-test        — admin — 임의 user 에 푸시 발송
+    GET    /api/v1/notifications/inbox                  — in-app 알림 목록 (E-R2)
+    PATCH  /api/v1/notifications/inbox/{id}/read        — 단건 읽음 처리 (E-R2)
+    POST   /api/v1/notifications/inbox/read-all         — 일괄 읽음 처리 (E-R2)
 
 설계:
-    - shared.notifications.NotificationService 위임. CoOps 의 prefix `coops_`.
-    - PUSH_ENABLED=0 기본. 등록/조회/폐기 라우트는 토글과 무관 (DB 만 사용).
+    - shared.notifications.NotificationService + InboxService 위임.
+    - PUSH_ENABLED=0 기본. 등록/조회/폐기/inbox 라우트는 토글과 무관 (DB 만 사용).
       발송만 ``PushDisabledError`` 에서 503.
-    - 인증/RBAC: 등록·조회·폐기는 인증된 모든 사용자, send-test 는 admin 전용.
+    - 인증/RBAC: 등록·조회·폐기·inbox 는 인증된 모든 사용자, send-test 는 admin 전용.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+import json
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from auth.dependencies import current_user_strict, require_role
@@ -24,10 +29,13 @@ from schemas.notifications import (
     DeviceListResponse,
     DeviceOut,
     DeviceRegisterRequest,
+    InboxItemOut,
+    InboxListResponse,
+    MarkReadAllResult,
     SendResult,
     SendTestRequest,
 )
-from services.notifications import coops_notifier, coops_push_config
+from services.notifications import coops_inbox, coops_notifier, coops_push_config
 
 router = APIRouter()
 
@@ -124,3 +132,87 @@ async def admin_send_test(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
     return SendResult(**result)
+
+
+# ── In-app inbox (E-R2-Day 1) ────────────────────────────────────────
+
+
+def _inbox_to_out(row) -> InboxItemOut:
+    parsed: dict | None = None
+    if row.data_json:
+        try:
+            parsed = json.loads(row.data_json)
+        except (ValueError, TypeError):
+            parsed = {"_raw": row.data_json}
+    return InboxItemOut(
+        id=row.id,
+        user_id=row.user_id,
+        kind=row.kind,
+        title=row.title,
+        body=row.body,
+        ref_id=row.ref_id,
+        data=parsed,
+        read=row.read,
+        read_at=row.read_at,
+        created_at=row.created_at,
+    )
+
+
+@router.get(
+    "/inbox",
+    response_model=InboxListResponse,
+    summary="본인 in-app 알림 목록",
+)
+async def list_inbox(
+    unread_only: bool = Query(False, description="true 면 미읽음만 반환"),
+    limit: int = Query(50, ge=1, le=200),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(current_user_strict),
+) -> InboxListResponse:
+    rows = await coops_inbox.list_for_user(
+        db,
+        user_id=user["user_id"],
+        unread_only=unread_only,
+        limit=limit,
+    )
+    unread = await coops_inbox.unread_count(db, user_id=user["user_id"])
+    return InboxListResponse(
+        user_id=user["user_id"],
+        unread_count=unread,
+        items=[_inbox_to_out(r) for r in rows],
+    )
+
+
+@router.patch(
+    "/inbox/{notification_id}/read",
+    summary="단건 읽음 처리",
+)
+async def mark_read(
+    notification_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(current_user_strict),
+) -> dict:
+    ok = await coops_inbox.mark_read(
+        db, notification_id=notification_id, user_id=user["user_id"]
+    )
+    await db.commit()
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="notification_not_found_or_already_read",
+        )
+    return {"ok": True}
+
+
+@router.post(
+    "/inbox/read-all",
+    response_model=MarkReadAllResult,
+    summary="본인 모든 미읽음 알림 일괄 읽음 처리",
+)
+async def mark_all_read(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(current_user_strict),
+) -> MarkReadAllResult:
+    updated = await coops_inbox.mark_all_read(db, user_id=user["user_id"])
+    await db.commit()
+    return MarkReadAllResult(updated=updated)
