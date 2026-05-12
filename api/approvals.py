@@ -1,9 +1,10 @@
-"""결재 — BUSINESS Ontology + Lore (Week 5 Day 4)."""
+"""결재 — BUSINESS Ontology + Lore (Week 5 Day 4) + SaaS Quota (Phase 2 → C-5)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from typing import Any
 
@@ -29,6 +30,7 @@ from services.approval_ontology_payload import (
     ontology_payload_decision,
     ontology_payload_request,
 )
+from services.quota import QuotaContext, enforce_quota, record_call
 
 router = APIRouter()
 
@@ -74,58 +76,79 @@ def _append_lore(
     "/request",
     response_model=ApprovalResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="결재 요청 (승인자 ID 필수 + Ontology 검증)",
+    summary="결재 요청 (승인자 ID 필수 + Ontology 검증 + SaaS 쿼터)",
 )
 async def request_approval(
     body: ApprovalRequestBody,
     db:   AsyncSession = Depends(get_db),
     _: dict = Depends(policy_require("coops", "request_approval")),
+    quota: QuotaContext = Depends(enforce_quota("approval_request")),
 ) -> Approval:
-    c = await db.scalar(
-        select(Contract).where(Contract.contract_number == body.contract_number),
-    )
-    if not c:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"계약 번호 없음: {body.contract_number}",
+    """결재 요청 — Ontology 검증 통과 후 ``coops_billing_monthly_user_usage`` 증가.
+
+    SaaS Quota (Phase 2 → C-5):
+        - 호출 *전* ``enforce_quota`` 가 월 한도 확인 (429 차단).
+        - 호출 *후* ``record_call`` 이 ``coops_billing_usage_records`` row 추가 +
+          성공 시 monthly ``calls_count += 1``.
+        - approve / reject 는 quota 차감하지 않음 (요청 시점 1회만).
+    """
+    started_at = time.perf_counter()
+    success = False
+    try:
+        c = await db.scalar(
+            select(Contract).where(Contract.contract_number == body.contract_number),
         )
+        if not c:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"계약 번호 없음: {body.contract_number}",
+            )
 
-    payload = ontology_payload_request(body, c.contract_number)
-    await validate_business_ontology(payload)
+        payload = ontology_payload_request(body, c.contract_number)
+        await validate_business_ontology(payload)
 
-    appr = Approval(
-        id=str(uuid.uuid4()),
-        contract_id=c.id,
-        step_order=body.step_order,
-        approver_role=body.approver_role,
-        assigned_approver_id=body.assigned_approver_id,
-        requester_id=body.requester_id,
-        request_date=body.request_date,
-        description=(body.description or "").strip() or None,
-        amount=body.amount,
-        currency=body.currency.strip().upper() if body.currency else None,
-        actor_id=None,
-        status="pending",
-        comment=None,
-        finalized=False,
-    )
-    db.add(appr)
-    await db.flush()
+        appr = Approval(
+            id=str(uuid.uuid4()),
+            contract_id=c.id,
+            step_order=body.step_order,
+            approver_role=body.approver_role,
+            assigned_approver_id=body.assigned_approver_id,
+            requester_id=body.requester_id,
+            request_date=body.request_date,
+            description=(body.description or "").strip() or None,
+            amount=body.amount,
+            currency=body.currency.strip().upper() if body.currency else None,
+            actor_id=None,
+            status="pending",
+            comment=None,
+            finalized=False,
+        )
+        db.add(appr)
+        await db.flush()
 
-    _append_lore(
-        db,
-        appr.id,
-        "request",
-        {
-            "contract_number": c.contract_number,
-            "assigned_approver_id": appr.assigned_approver_id,
-            "requester_id": appr.requester_id,
-            "amount":       str(appr.amount) if appr.amount is not None else None,
-            "currency":     appr.currency,
-        },
-    )
-    await db.refresh(appr)
-    return appr
+        _append_lore(
+            db,
+            appr.id,
+            "request",
+            {
+                "contract_number": c.contract_number,
+                "assigned_approver_id": appr.assigned_approver_id,
+                "requester_id": appr.requester_id,
+                "amount":       str(appr.amount) if appr.amount is not None else None,
+                "currency":     appr.currency,
+            },
+        )
+        await db.refresh(appr)
+        success = True
+        return appr
+    finally:
+        latency_ms = int((time.perf_counter() - started_at) * 1000)
+        await record_call(
+            db,
+            quota,
+            success=success,
+            latency_ms=latency_ms,
+        )
 
 
 @router.get(
