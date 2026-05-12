@@ -5,6 +5,7 @@ from .auth import router as auth_router
 from .billing import router as billing_router
 from .contracts import router as contracts_router
 from .investor import router as investor_router
+from .notifications import router as notifications_router
 from .ontology import router as ontology_router
 from .processes import router as processes_router
 from .sns import router as sns_router
@@ -57,4 +58,9 @@ api_router.include_router(
     investor_router,
     prefix="/investor",
     tags=["content-investor"],
+)
+api_router.include_router(
+    notifications_router,
+    prefix="/notifications",
+    tags=["notifications"],
 )
