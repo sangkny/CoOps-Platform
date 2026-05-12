@@ -5,6 +5,7 @@ from models.billing import (
     BillingUsageRecord,
 )
 from models.business import Approval, ApprovalLore, Contract, ContractAnalysisRecord, Process
+from models.content import ContentJob
 
 __all__ = [
     "Approval",
@@ -16,4 +17,5 @@ __all__ = [
     "BillingSubscription",
     "BillingUsageRecord",
     "BillingMonthlyUserUsage",
+    "ContentJob",
 ]
