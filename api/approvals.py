@@ -30,48 +30,12 @@ from services.approval_ontology_payload import (
     ontology_payload_decision,
     ontology_payload_request,
 )
-from services.notifications import coops_notifier
+from services.notifications import notify_safe as _notify_safe
 from services.quota import QuotaContext, enforce_quota, record_call
 
 router = APIRouter()
 
 log = logging.getLogger(__name__)
-
-
-async def _notify_safe(
-    db: AsyncSession,
-    *,
-    user_id: str | None,
-    kind: str,
-    title: str,
-    body: str,
-    ref_id: str | None = None,
-    data: dict[str, Any] | None = None,
-) -> None:
-    """E-R2-Day 2 — 결재 hook 용 best-effort 알림.
-
-    - user_id 비어있으면 noop.
-    - InboxService + PushService 모두 실패해도 결재 트랜잭션을 막지 않는다.
-    - 호출 시점은 ``await db.flush()`` 이후 / ``db.refresh()`` 이전이어야
-      ref_id 가 안전하게 ORM id 를 가리킨다.
-    """
-    if not user_id:
-        return
-    try:
-        await coops_notifier.notify(
-            db,
-            user_id=user_id,
-            title=title,
-            body=body,
-            kind=kind,
-            ref_id=ref_id,
-            data=data,
-        )
-    except Exception as exc:
-        log.warning(
-            "approval_notify_failed kind=%s user=%s ref=%s err=%s",
-            kind, user_id, ref_id, exc,
-        )
 
 
 async def _emit_contract_approved_event(

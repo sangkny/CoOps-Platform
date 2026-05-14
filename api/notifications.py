@@ -216,3 +216,36 @@ async def mark_all_read(
     updated = await coops_inbox.mark_all_read(db, user_id=user["user_id"])
     await db.commit()
     return MarkReadAllResult(updated=updated)
+
+
+# ── Inbox retention (E R3-Day 4) ─────────────────────────────────────
+
+
+@router.post(
+    "/admin/purge-old",
+    summary="admin — 오래된 in-app 알림 일괄 삭제 (retention)",
+)
+async def admin_purge_old(
+    days: int = Query(
+        default=90, ge=0, le=3650,
+        description="이 일수보다 오래된 알림 삭제",
+    ),
+    include_unread: bool = Query(
+        default=False,
+        description="true 면 미독 알림도 함께 삭제 (위험: 사용자가 못본 알림 손실)",
+    ),
+    db: AsyncSession = Depends(get_db),
+    _admin: dict = Depends(require_role("admin")),
+) -> dict:
+    """수동 retention 정리. 자동 스케줄러는 ``INBOX_RETENTION_ENABLED=1`` 환경에서
+    매 ``INBOX_RETENTION_INTERVAL_HOURS`` (기본 24) 시간 마다 동일 정리를 수행한다.
+    """
+    deleted = await coops_inbox.purge_older_than(
+        db, days=days, include_unread=include_unread,
+    )
+    await db.commit()
+    return {
+        "deleted": deleted,
+        "days": days,
+        "include_unread": include_unread,
+    }

@@ -12,8 +12,11 @@ from fastapi import Depends, FastAPI
 
 from api import api_router
 from config import Settings, get_settings
+from database import async_session_maker
 from events import DEFAULT_EVENTS_CHANNEL, EventBus
+from notifications import start_retention_loop, stop_retention_loop
 from observability.fastapi_install import install_observability
+from services.notifications import coops_inbox, coops_push_config
 from services.platform_event_handlers import coops_incoming_dispatch
 
 log = logging.getLogger("main")
@@ -48,6 +51,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         log.warning("redis_url 미설정 — 플랫폼 간 이벤트 구독 생략")
 
+    # Inbox retention 백그라운드 루프 (E R3-Day 4) — opt-in.
+    retention_handle: tuple[asyncio.Task, asyncio.Event] | None = None
+    if coops_push_config.inbox_retention_enabled:
+        retention_handle = start_retention_loop(
+            coops_inbox, coops_push_config, async_session_maker,
+        )
+        log.info(
+            "Inbox retention 활성: days=%s interval_h=%s include_unread=%s",
+            coops_push_config.inbox_retention_days,
+            coops_push_config.inbox_retention_interval_hours,
+            coops_push_config.inbox_retention_include_unread,
+        )
+
     yield
 
     subscriber_stop.set()
@@ -58,6 +74,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             sub_task.cancel()
         except Exception:
             log.exception("이벤트 구독 태스크 종료 오류")
+
+    if retention_handle is not None:
+        task, stop = retention_handle
+        try:
+            await stop_retention_loop(task, stop)
+        except Exception:
+            log.exception("retention 루프 종료 오류")
 
     log.info("%s 종료", settings.service_name)
 

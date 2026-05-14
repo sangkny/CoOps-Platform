@@ -18,6 +18,7 @@ from schemas.content import (
     VideoGenerateResponse,
 )
 from services.content_agent import generate_video
+from services.notifications import notify_safe
 from services.quota import QuotaContext, enforce_quota, record_call
 
 router = APIRouter()
@@ -69,13 +70,23 @@ async def generate_video_route(
     started = time.perf_counter()
     success = False
     try:
-        _job, payload, success = await generate_video(
+        job, payload, success = await generate_video(
             db,
             user_id=user["user_id"],
             plan_code=quota.plan_code,
             allowed_models=quota.allowed_models,
             req=req,
         )
+        if success:
+            await notify_safe(
+                db,
+                user_id=user["user_id"],
+                kind="video.completed",
+                title="영상 대본이 준비되었습니다",
+                body=req.title,
+                ref_id=job.id,
+                data={"action": "video", "job_id": job.id},
+            )
         return VideoGenerateResponse(**payload)
     finally:
         latency_ms = int((time.perf_counter() - started) * 1000)

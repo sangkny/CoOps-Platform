@@ -22,6 +22,7 @@ from schemas.content import (
     InvestorReportResponse,
 )
 from services.content_agent import generate_investor_report
+from services.notifications import notify_safe
 from services.quota import QuotaContext, enforce_quota, record_call
 
 router = APIRouter()
@@ -72,13 +73,23 @@ async def generate_investor_route(
     started = time.perf_counter()
     success = False
     try:
-        _job, payload, success = await generate_investor_report(
+        job, payload, success = await generate_investor_report(
             db,
             user_id=user["user_id"],
             plan_code=quota.plan_code,
             allowed_models=quota.allowed_models,
             req=req,
         )
+        if success:
+            await notify_safe(
+                db,
+                user_id=user["user_id"],
+                kind="ir.completed",
+                title="IR 보고서가 준비되었습니다",
+                body=f"{req.company_name} {req.quarter}",
+                ref_id=job.id,
+                data={"action": "investor", "job_id": job.id},
+            )
         return InvestorReportResponse(**payload)
     finally:
         latency_ms = int((time.perf_counter() - started) * 1000)

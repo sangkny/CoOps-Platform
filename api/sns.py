@@ -18,6 +18,7 @@ from schemas.content import (
     SNSPostResponse,
 )
 from services.content_agent import generate_sns_posts
+from services.notifications import notify_safe
 from services.quota import QuotaContext, enforce_quota, record_call
 
 router = APIRouter()
@@ -64,13 +65,23 @@ async def generate_sns_route(
     started = time.perf_counter()
     success = False
     try:
-        _job, payload, success = await generate_sns_posts(
+        job, payload, success = await generate_sns_posts(
             db,
             user_id=user["user_id"],
             plan_code=quota.plan_code,
             allowed_models=quota.allowed_models,
             req=req,
         )
+        if success:
+            await notify_safe(
+                db,
+                user_id=user["user_id"],
+                kind="sns.completed",
+                title="SNS 포스트가 준비되었습니다",
+                body=req.topic[:200],
+                ref_id=job.id,
+                data={"action": "sns", "job_id": job.id},
+            )
         return SNSPostResponse(**payload)
     finally:
         latency_ms = int((time.perf_counter() - started) * 1000)
