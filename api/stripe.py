@@ -15,6 +15,8 @@ from database import get_db
 from saas.schemas import (
     StripeCheckoutRequest,
     StripeCheckoutResponse,
+    StripeMeteredUsageRequest,
+    StripeMeteredUsageResponse,
     StripePlanMappingOut,
     StripePlanMappingRequest,
     StripePortalRequest,
@@ -56,6 +58,9 @@ async def create_checkout(
             plan_code=body.plan_code,
             success_url=body.success_url,
             cancel_url=body.cancel_url,
+            allow_promotion_codes=body.allow_promotion_codes,
+            promotion_code=body.promotion_code,
+            coupon_id=body.coupon_id,
         )
     except StripeDisabled as e:
         raise HTTPException(
@@ -128,6 +133,7 @@ async def create_portal(
             db,
             user_id=str(user.get("user_id", "")),
             return_url=body.return_url,
+            flow=body.flow,
         )
     except StripeDisabled as e:
         raise HTTPException(
@@ -138,6 +144,39 @@ async def create_portal(
             status.HTTP_404_NOT_FOUND, detail=str(e)
         ) from e
     return StripePortalResponse(session_id=session["id"], url=session["url"])
+
+
+@router.post(
+    "/metered-usage",
+    response_model=StripeMeteredUsageResponse,
+    summary="Stripe metered SubscriptionItem 에 usage 기록 (increment/set)",
+)
+async def submit_metered_usage(
+    body: StripeMeteredUsageRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(current_user_strict),
+) -> StripeMeteredUsageResponse:
+    """활성 Stripe 구독에 연결된 **metered** line item 이 있을 때만 기록.
+
+    metered 항목이 없으면 HTTP 200 + ``status=skipped_no_metered_item`` (에러 아님).
+    """
+    try:
+        result = await coops_stripe.submit_metered_usage(
+            db,
+            user_id=str(user.get("user_id", "")),
+            quantity=body.quantity,
+            action=body.action,
+            timestamp=body.timestamp,
+        )
+    except StripeDisabled as e:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e)
+        ) from e
+    except ValueError as e:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail=str(e)
+        ) from e
+    return StripeMeteredUsageResponse(**result)
 
 
 @router.get(
