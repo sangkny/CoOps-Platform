@@ -245,14 +245,15 @@ async def test_revenue_metric_accumulates_for_paid_and_refunded() -> None:
     """saas_stripe_revenue_usd_total 카운터에 paid/refunded 양쪽 라벨 등록 확인."""
     try:
         from prometheus_client import REGISTRY
-
-        # 카운터 등록을 강제
-        from observability import inc_saas_stripe_revenue
-
-        inc_saas_stripe_revenue(service="coops", amount_usd=1.0, direction="paid")
-        inc_saas_stripe_revenue(service="coops", amount_usd=0.5, direction="refunded")
     except ImportError:
-        pytest.skip("prometheus-client 미설치 — 환경에 따라 skip")
+        pytest.skip(
+            "prometheus-client 미설치 — CoOps requirements.txt 및 이미지 재빌드 필요"
+        )
+
+    from observability import inc_saas_stripe_revenue
+
+    inc_saas_stripe_revenue(service="coops", amount_usd=1.0, direction="paid")
+    inc_saas_stripe_revenue(service="coops", amount_usd=0.5, direction="refunded")
 
     samples = []
     for collector in list(REGISTRY._collector_to_names.keys()):
