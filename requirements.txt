@@ -12,3 +12,4 @@ redis==5.2.1
 prometheus-client>=0.20.0
 pytest==8.3.4
 pytest-asyncio==0.25.3
+stripe>=5.0.0
