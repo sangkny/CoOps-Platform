@@ -140,6 +140,17 @@ async def request_approval(
             },
         )
 
+        from services.approval_pipeline import process_four_agent_decision
+
+        fa_audit = await process_four_agent_decision(
+            appr,
+            contract_number=c.contract_number,
+            amount=appr.amount,
+            description=appr.description,
+        )
+        if fa_audit.get("mode") == "four_agent":
+            _append_lore(db, appr.id, "four_agent_decision", fa_audit)
+
         # E-R2-Day 2 — 결재자에게 자동 알림 (inbox + 가능시 push)
         await _notify_safe(
             db,
